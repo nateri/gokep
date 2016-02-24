@@ -1,0 +1,598 @@
+package main
+
+import (
+	//"bufio"
+	"errors"
+	"flag"
+	"github.com/gin-gonic/gin"
+	//"github.com/nateri/gokep"
+	"github.com/op/go-logging"
+	"io"
+	"io/ioutil"
+	stdlog "log"
+	"net/http"
+	"net/url"
+	"os"
+	//"os/exec"
+	//"path/filepath"
+	//"golang.org/x/net/html"
+	"bytes"
+	"github.com/PuerkitoBio/goquery"
+	//"golang.org/x/net/html"
+	//"bufio"
+	"encoding/csv"
+	//"net"
+	//"regexp"
+	"strconv"
+	"strings"
+	"time"
+)
+
+var (
+	log          = logging.MustGetLogger("gokep")
+	keplerUrl    = flag.String("kepler_url", "http://kepler.sos.ca.gov", "Url hosting Kepler")
+	httpListen   = flag.String("http", ":12346", "host:port to listen on")
+	quit         = make(chan bool)
+	sleepForQuit = 2
+)
+
+type BusinessType int
+type ResponseFormat int
+
+const (
+	Corporation BusinessType = iota + 1
+	LLC_LP
+	EntityNumber
+	Corp_LLC_LP
+)
+
+//const (
+//	Json ResponseFormat = iota
+//	Csv
+//)
+
+type Agent struct {
+	Name         string
+	Address      string
+	CityStateZip string
+}
+type Listing struct {
+	Name         string
+	Number       string
+	DateFiled    string
+	Status       string
+	Jurisdiction string
+	Address      string
+	CityStateZip string
+	Agent        Agent
+	Type         BusinessType
+}
+
+type AspContext struct {
+	EventTarget        string
+	EventArgument      string
+	ViewState          string
+	ViewStateEncrypted string
+	EventValidation    string
+	Additional         string
+}
+
+func (this AspContext) ToString() string {
+	var s string
+	s += "__EVENTTARGET=" + this.EventTarget
+	s += "&__EVENTARGUMENT=" + this.EventArgument
+	s += "&__VIEWSTATE=" + this.ViewState
+	s += "&__VIEWSTATEENCRYPTED=" + this.ViewStateEncrypted
+	s += "&__EVENTVALIDATION=" + this.EventValidation
+	s += this.Additional
+	return s
+}
+
+func CreateContextQueryCorp(Name string) AspContext {
+	context := AspContext{}
+
+	context.ViewState = "4%2FdLWoeD4vM2bolo9GdzcU1pXOa1sakXjOTyWghRWPvvbPxF3W%2BiAnVGYfPUebDqcsOnTPDgj3Ipbt%2FjioG%2BDjfdcxB1mT5O%2FP9aUjoQtk%2BT%2FbX1VEXmzOs7Y2Jfrb5TxwCORZTQ%2BjvhoQc3SoBAkKAuZaWH5COoaRbzU5RUOTJAICkF%2BJb9NWZByRWzOEti8w5qhsZlHDIxbX%2FFa185XKNt3sDGq3h%2FKnQGmNxH3Wxnn4cLw3TqFtfs%2FXtpzdYH6Y8gbcwH3yd6aLgoTOE2R3miyszP%2ByKnkOgFTENdc8btzWTmtF%2F0gf4XeXm4j7d1eSBuZJT8W8jPReoeg02UpYck%2BnRAc5XjqxMV88HNg%2BvViDoN0XwG5JBAYjpRbwmdaXyhnwwbxRGbrIELO853nrRJZlD9iijqVTfe2xUX0M9Ylrzdq8Fgssxt5PSz%2FumRsto0fOrP1bsyOsfOK4UQbFjz1EMARW0Rz7G4uf3VpRZtIrySrETOSpa%2BcTCjlCkRLk3LimR5gfE3F%2BU%2BI1%2BQkO7iJXmh%2FRlfqRQTAVsV5GsMLy8L7BInr%2F2gIb2UqeRg7W29D5Jyxh8xQQnW56YP9EQSwvzCsUD%2BbbNSE76KUCZVS9GFlhIzDhK%2BDDh2mluRcZ5uU8Na3gEGk3VhAZRstGxZoYi8RGrAv5qti1%2FNQ0q7veO0Gjjfj%2F9ERUCk8Zwg45N8dOA%2BZzjLLtLKfkI%2BU2b9Dl96fS1JKBjXaq2bcibr2V9IZhAtijkUVDS7kBaP01%2FGs4Ss%2FFm%2FPwxhlA9kWTiQQvNm0N8cRiuO6%2F2u6OaluWZeRYu57X8l435zsC%2BisPFyPqTCjfYxn502ciLj%2FYAe5bFOOj5xTFrfd46GA8OXedWk4eDo59XFTBNrUf17vqyIICHX%2B8kIv0E4%2BiQGVQqnIaxkcft5So%2BgJ2JWHTt%2BMVV4wxnykPl5ya4cM4uOquAuFsRifp%2FnN3Pu75gCG7rjiJirGBZEjgLdjuQ9cy3oLGer1SlAA%2BQwYVf4%2FOfRbGTitpj3hwfbUX%2FfEVtG3kQjdGtg2HXwTTzL7LIjw3kl5EwSZiO9m70SWzrtLhPOePDNQoBS%2FMYOA8zUjtBnSn2S8WYEkcErkF9YIAQFfRJoMHCoQCrcYhmwSE%2B3hpqaS4Hcg6TY%2FL27%2Bk18u0pVAZh2INdQturB%2F0SXDw2CqL41TYp8VPcyt3ac8LQelZHWvcN9Hgol1zSW60ZAJrwKyLoUtbq92ka6Zo6EhOMtmoauea%2FaQVBrf04f%2FXJMKw%2FHTRuXS3LOsJE4bg4LBLaXskunK5ts6nQ6lj64acKkHXiXgmDhrKEhzqJd%2Ftf0vMK8OIVT7%2FtbdHyMYHhOCdxj7GQKQxTKHjqJ74MHCNA9Aptj3vMKpxPKATz%2FWrhVc6iJ7nLgHwEQe6Nmgq30ZDTBQuU7ros6xeYkuh%2Fn1d1B0flaUIj4QtnX57k408xklGhU2C%2BlJ9U8xfHlTCH2VOFXAjSSo8Hrbx48Tm2wvLyfQQF2CAE8xQVst%2B3btBV1RoEr5JCMtBNjpOePDv8ZAy2wRBo2lRy5pUN%2BmBsYnQEy%2FFHSHLB05CAfnXUSkB3F8g9jtQlO5eWG4tB5SoSYerYnXSNs9c1MK%2Fc74K9SIYTqBNAKkitnIhKX%2FrKBuWtleoJiRkw2RKBGUaneetwTatGYcmfagKimomsV%2BIqhwN3i13kjihZjhOKSwRz2K0gwQlFk77UNiMwhGwW51u6uFsdbY9w6ki7WZEcVU80lt%2F53UsUSdXmhLzUs7ItuHQxrfzmXEtIHmwuU63%2FN%2BhGIjC7lcIsH09aGEjLY75rQSepZTNaAYTzOBJ4BS1uv%2BeS3uO37HRQ4orBz0JRRgsZrkcwB2CXQ%2FB87mZD997TxLyfIpLADezNuvyX5lt4RV1ERy%2BazZsbttNHXsiHoWvPaszhjyavsL3hsnmUVWdOv2pcL7qsal3yHuyGsNPEz%2BOheHuKlp5hDZSJBotid%2BpysKpBpzCW2IFjjH2glhzrUhqMm6bymsVxiYlblNFjxuoXLL5j0oOhbkDLmucwipvMJvqmAiFUrxpJlPFQAT215NebhG29L2QMc42j17TN1zUUnOyMC8Zqqmg28Hbv58g6Z945Hpo2PcQq2yAIGu%2BJx6IidSqdKfSBABrZDz1737asgoJX7NmZ%2FMp8I0yxRKnQs10XlVBWDE28ia1hBBUAckSLqVXgdKYKl16XY%2FzjJNrwdgMx5HpOPQS5RVD8rz8Fa3NRl87JC40bZcZo8PS56Q5HNgVbdfKCm5zu6RpKZS9h4cNs26CztuNplkLvI5a5wRKolN2pfa5Mo1FbxtSw5d0Vlk3ZCrnuY5Scwwd69e35PbVt9KSZCK%2F7g4LEKx3oZ4SlHf7nG0O5iyN2wiY55255w%2FV10LsmFV%2FVvope0A6zJCgvbARtdp%2BemwRrt2ZLT36Psvayc19bQsSfc7K%2FocRDcHg6yMZ%2FxeCmkS1QygvI%2FsgYWWKgfhWgxYV96YwYSx1NCf7rP4oBIgCNHxMGN7eCkgsSwe0qMlZ2fXd%2FEQnymVD3Eb8eX0Qrwm2JDNkS2wbQVpPKtjLY%2FInSd6ygbq%2FyXq6eyCUUWXTrK3j5k4pGKDclJRUTg72czXJ0bRcU6c%2FMbC%2FV%2BLDKBq9e%2B%2F%2FYa3l0wlyo27E8BTC2q5qFs5mNZ97yD96e0Dg3Ml3XxlXt8RrcFtp54OMZyL2mah4kHC5WAy3CZ8K5bWGGfwZbAGTNZwm54jUdg8%2BEeBpoL%2FCAd9mvF%2BbHlg2Nw6t2tpxGvGI5DlZ%2BW6dG%2BRyfnDR7buWuAXW8cyoXWEokipSuW10fyjd2fXGiMzCAyvrVaoGoRRIhQXM%2FVKalZMHyhlQsKyoaj5PSbAyTKzN37QgMwl3%2FPQ58ApGTNI80VgTxjg89S%2BdUHDLyH2toO6Yooib67myWdM3bs5vpNeFXkQ%2BMxbhCYzAvBpiHDeXDg6Yazwps4SLfWAzwebym9sN3bROd7EFMr39%2F0h4YSmKVv7TlkgUBNr6kzKQg%2FT4KKHszvAOlaOhY9k4KtF%2B%2F%2FHZLY3Hz90hMGIXESZHHQ4T7gGz1SWNauXn1q6PZzLxV6OR7gMniXUGl79g5IoOSUlW5%2B58DBhPhOUM%2FWYpQnyu2pWEkYG454LNmPJC7001Vu%2FLdLILZe0tygFkFa5b8MdlKabo5ifWJVHFe2831F3jsy6%2FdLyn72bebYz59IR7xrBIq%2F38o3%2Fc%2FoFwZv0hLQqf4nOcqLeIak8I265TL7EoCOBUs6XaCYtAaPyJIrtUKoR6adguCSotD29yZIhntajmbF4j%2BtC0gyLxCZDiacwxZs6UONDWtxJYKX0FgKGy%2BYUi9EBW1WnE4aDWZ5NWGQZkWUlfjkzNtlPQEgMRWLdsv1wYrttObnDpFgsULpu0mmzh6VT7Mx1iXgYWTuNytg7rMj7G8bG9vaCs64%2B7KF5pJGkzbWQ9n5kysneyGwMtjoizdpKM6K1%2BNRxSYFKydu%2B8CtiitCWC6qx0sZ%2F%2BsgD3LyhkSOZiHTNQko403ZJdltw3zy4%2BB4169ABdCcLh7CcetejZc0FrptNIPCmwYxCj5DHHFMacwyniMubqyFCP7PRY7vIW%2B9kMjaSEIECv82MxHPUKJMmbzxZv%2BQSPbUQeMPRO9tWd%2FIjIv%2BvD%2FqVOjkLe2KA05ifAmTAXDh6nZgQR4xw6mU0Qc9Q7AdtpDQu9bYmvUhGexfAwUomy5u9FQGdHE4673szsqHzrXv%2F%2FG5zLemqurw5SJsfEiLQAnf5ZjKgaVPbk0erTmoKCZrbVOJDRnht20On8G6h9CvPTYLFcp%2BTbsz70VftFV%2FrPTh4Y6rs5b3YSz6ieNQm%2B57lP3yfCW689hv8zMJWJIwJu33ZGwsR5SO2aEoPKhvo%2Bu6fv%2FtPSHCCYyUiHtcdaEbqP3RXm2dT29ah2fDNpxEUCPOPuj8l5rqIaT%2BA5zLZC3krE3W%2FZsHOuPiTyVPAecTLJpRDul7nmlgMzH2oSFCPwVod79o11XI9jLBtkX8GSKgpuriFpdBAoP2XSC6bYbGqNNZHkd%2BVQ9YMTI57z13qzOoYfJ1uA3NIABcS7Dqx26yh7A7Lm%2BwvYj%2F8Es5wggK2zN6oTSbDdlJ%2F8n%2FqIN%2BNSBGnKZ69j5jJNPOxgfXqfSD%2FWOW3MAPvoZjQVWIPbaj%2BjxZ1Wm2c1wuZ0iEB3ulwVROlnzaKXFQfreNTT7TU8UnYj3ZxziJvMoHQEtFgVVzAqDMpQ%2BTBMfCA5%2BwPx8FzAlNAuwQyMRlVOBcq3uDjPfZoie0TEVdzWMB9iegxnxmj3igowYmg5F7C%2Bjlly4ixKrv1GqartHfgu0LyTzwdUAW6EyurmYMXBcBtQhRBp%2BntEq16AzBFm6O6VLIxbuFea3qASH0W32ZHJbmcXSzumO7ZTcnZyNEdQpUv%2FrXMB9tVQchi4IBm1gfzHhmuO8mpMKJ8DqD0rvB%2F5AnaZXQ0oOGb%2B4%2FiTsNCq%2FXqfmXvZIR6djJgbEMqGPaRySqOi4qrT976QvQu8clJokOe0tPEDLVb988IvlfysT%2FmsAz14%2FHiOCWL%2BdVn9QMySzdpzmmuzfNJ4gArFL%2Fzr2n%2Bc6Gq14ph152HmuX%2Bw5ZJ%2F9O0KBz9DITA0s%2FRj6adM77NayEnurExHRDf%2FD%2BRhNpyCacr5eXreT%2F2HoP1INFO%2FG0qbLQWtf6e1FZ9IvNHj6ftCRDuvTdyU4%2BGZPbMrxC4z4tWu4a3mnXmSfS%2FszqX8DjnwyvwXm%2B0jsycqJsL2EDx7UPBwh9JdSNhnP5KQD6ZgER%2FG9k0tJd%2F7gGisvdRESko8WESpmRuLbLkV0AFEuqOln%2Ff5SR6BZf4vvn%2FmpgtB9ddRzRBCSsXFEYcdXovy2b%2FTh7Gzc4GGjgKAp5RpmhSsttRCQIH9Ld%2BqpWFfPmjt92f6i3WTwqDRGL3Zrr8HQPhPMK20k7aXPWb%2BQ%2FFY4jNAfMdsZtSGEmZ7AqDizTzwqDvsua937qh9Tz%2FOH28R8gCbP6YJZ8%2FV7uvK7fsy1POuwGOVj93u1%2FRmp%2Bsbcz4PY5%2FbJkQIRK02c4vpeOD8JYx3uEcd%2FdwdYpLCVVu5T5KjdcmG6sgGtxERymIdPzLfsSe8iBJbOdV5be9gjAslOEUCa8agaCKr05RKTvAYnTD3yP4DhIhLSCK72KUIfPsQPe%2BzJXzBIq7rgI4bi2c4L%2FvBz3%2BG0KfmU18ISCJKdsSaFrFO5HBuFKzrRWx6Ldt%2BIsReIJF3jnlz2NpTNZ1GIwzUa4BQ1TJoA0g4%2FQBNxOi2Vmu5mqM9rji9nTTBhOGbcs9Ge%2FG2a7WRf1bFuvhHtiNz4%2F0SUul5KWXgyOA%2F5XCcYTrIhi2DTZOmFM2MO6uBSJ0QLykQdaQMvAbHa7DMAqHuQ5QjMnvXG9ehWk13zHpBW7v6UPI5bd3MFOI58YlRFnXdWcT9IVKfolr7jv5kxekb7mxZ9rGcI4O%2Bg7Zw8nCOW8ld25ruC8GWMaxDZ4nRYasef5E3lsh%2FO1HUf1mVcfStGXGTGr7uZDs3CEWVbFI7%2BnOi7gK0VWU5%2BVLXeUJvDU5R460S6cQdLHvaoE6C8qtOvD%2BP%2FQ4m02%2BUNxb69prl%2FO0QAzHqY59634ZrbdH6z6vT%2F3utxfxt6TrPnWjxV8Tt23Y54Sgt0zb3U1gYNCgcNn9wzjeVv0Wi%2F9dsTRN9MVgjZARA3%2BcLlgbfNZ5bjtw8Zq4DBIXIFaO%2B2RHQBVh2nz38A%2F4Qhetk9aWNDdBKbjQPmm7LHiSHYN2NrnW%2FwcEfeqTPMYe4q%2FtC4GMnGUyrWTUMMTQ6FrB2yhwJFsKoW8COownTnhxfqdy85XCu%2F65cB0shrRJ8u4EhAbpjbyC8rviypOYLdm4F0oTSmDuqohOH7Nfxf86aCggrNEDQQHItHZK6YVUB%2FkRURRUmXXE8D1xpxPQi9oulIfkd%2BVP7obDXathtTRpEXqIcIfCF8inGIaZk85By2KB54rmVQrdApqBfRl2kMkx5twoN7HHWGCrbsnPgiz04h924xYAjVv3o%2BiRSiOhNswhnMZ6HuRSEfiK0yqT4yZyLlKoRmm7F09g0jw%2BOP%2FRxsTeTM%2FWfeXZkTfMNNdooMZTMIbQ5slr3rpebIPrW5coGagRlnBRs%2ByAhMHpJyp%2B21qfA%2BKIl1sSdl89WFjMDFMJQvjTQwKq%2FGiMegstzujWmq%2FV2V94%2BwrIAFusq7Nrsw%2FmCx2uGwTVIfAwl%2FlMWkNYxU40vQerII4voHxEGxQoCDoPtCPP21sqFPOeR9Z4Z9F5G1QutepZUj21PQ3IAFTEg1ZYXefmpkdx66OMu3Vr2UqrRsnp%2FUVI1yfIzUkkn3bEJesX3Ki9YiFiGBv5AqVdgqDQGT8PGYSuz4R2rkwUtXtCGOc%2BqQ%2BRgpJ77MrOsSgXLCUptopBfgGPl2Xb3pUQpJM9X2qeHqPKxKRcYYMyMcWmHV2itXNaJcbdTAItl%2FlJ4OcaV8yKkegx%2Bpxn4LlgpDrs58SPmPGjd2BlIj%2BkNRrZu3P6lo1OWm%2FetGzb%2FWFh6QFgpt%2BWLPDF2U8YnNQY5IdUfNf87ootRbRjcDm57FDRmWKB7M73fBbH7GDSYblw3Z6MMDDPVkSTl2rB%2FQf%2BLaLNrZwYpm57pV7qKlmMcGD%2B5jBu1oFjnTtuCkNxagIuHH2zkOGlNfmBqAGuKdS7wc1vfP%2F8O0vo5OaVjoaac1c66zoU1YSoxvBA8s44yKxYTvWhCymYGPKpPWz0FR%2B5ucqyK19gHI%3D"
+	context.EventValidation = "An5Y6yI6pCTIlC7QaoVPL4%2BCGi7RRhFdClQ4PsYBbRmHsXmJeoljuQouvu1yUlluPw9U1HdAIIegdWVXwsqtCDJtK1mvshfiBHmdE55lrJRUOiHdpU9qraRrMBGEiHOZ8oGAp8ZiTmLW4K9U8PURdQ%3D%3D"
+	context.Additional += "&ctl00%24content_placeholder_body%24BusinessSearch1%24RadioButtonList_SearchType=Corporation+Name"
+	context.Additional += "&ctl00%24content_placeholder_body%24BusinessSearch1%24TextBox_NameSearch="
+	context.Additional += Name
+	context.Additional += "&ctl00%24content_placeholder_body%24BusinessSearch1%24Button_Search=Search"
+
+	return context
+}
+func CreateContextQueryLlclp(Name string) AspContext {
+	context := AspContext{}
+
+	context.ViewState = "qNtFkrBtCY5dI%2FZr9bcQxcuz6RqfxerQ8y5rfBcHJdTtcKQj0JSrhougQF7SDXPnZuoUnroP6%2FPC10Bj6qjZrMKoP%2FzTkGbMInWAnYhuTGFZHnw9RtMjC9dRD%2BgdEmXbbvYOGRs4eXHNv3GBu48u9iYiXkHRb071ThVjRRRSDRwmpizvHIJ2tNPMF6Eb4uKlRvGfm2rqx%2BK3QQmDkRjvYwBPCPXSiIwwi6JNGKth2Ebe7lGPdt6zbeDAKafwc54Kt1hsCwQPRDKsNbrvGz0W77tEvsz2OvjhHR8YMb3DS%2B%2F1TX2psidpSwogrYRNLuwF1y3dNupFvf%2FYq3NKRHUjNKONZkaqchTLp2HgU5a6BvK%2BVoo9ZINOISFvcyt4YCQQZQgcThRQtmKiK%2F7B5af9zU6ikASJ4sWtUe%2FzIAFQM1YOjgEy8OZnf%2FMgCWvlpjLsPcg%2FhYXcOJTTdvFpZa0EXLPNJxZu5YHpiTxa24CFLeKEpbMAWNLTgsdksn9qfjM9MRKCJwr4vy%2FogrXD3D8riyLa0zdaQf19BX17x6l0klHlgWI10VSGoyL%2BSdsKgJsNoNpBkfSqq3Sokn7UiY0V4LBxzBtXQgCr5jAyM4G3uQkliFttxSUbK0DV4ZY31MXeYiq%2FkA6qzGVO%2B9mWrR74OGkWnZSJ79S0Z6QBgJUFDGFcysyXikvaEJhcl2ngf3GpLqBtwsJZiKiguk48wTRhWWWh6G7VWv0BPXKU8hC%2Fzk3lFUQ9PqMWrsnjarDae4mQwyr5J8%2FczZ0I4mkeqIvcaxV9DwkfI%2BVt0lGBhhC3EnzLDz288vmxgWI3aiWRboZsUpnLX6dRzWqUPa%2FUqpUys8b%2B3YBNJT3JU5ydXDnc6OM%2BNOiRKYuwayKWmCQ8WtJXYe52h2yI3o2OcqbHlWqBsIg6ZG8w8BrDhk65htpoHeo6dhS2iMBzOX7IZ6hos4Lx4ZaIIYW3hGidX4QCTlAiU0TKZ1X2FaS0zNVJ5ONM%2BJ712u7LTGonV2bIyEU4OZvI2xBnADgKyz5sswh0xOwn9Zy0Up5gt5UfQaZAmYzGl7onxJClmkwnvInRtKXi%2FOG9JnEu0OYyxjMSumIUrVoo2Z0qYvh%2BkYuVyyLAWMqIxAx6cbSvztUh713f60chlQtBBJVpJ3d%2B79nrfjeSN4aWiUxkC5LdB7%2BfGs%2BPmsR%2F0WUAEED5LycKTs92xuAUR%2BBqJQhCfdcsipWF8aHifWdxNpK3Rg6u4LbPKr638BYepWjUBST1VBDYgB95xqo83gZSwP%2By8fEGdeVzMiWDKhE5gH5zt78VPaAyhBPmCM6b75zbCIfVasZ%2Bkph0MHbBIRe9MBjkXynONRtgOAprnBbsIj1shs1m2lR41dkssRuZ8zXX4Dwi9BBqUBteingL0dJS8DHanmcB0BjvlvLOSsrdWz1QMbj7VHQOAf%2FzYeYjHkf7duoY8%2FW3btZYe0gQGlRC47XLtwabm7PLCdN4ZUsppBx7TObYndxrUT1Gb8tBJZY87k5URe%2BC9cpUJH2JvHiyLOCJzk3wvOR8f7d3KCDkQSkhM6gFVYSPCzLSS5FbI%2BDHzrsUaBWrXEijq4c8joQpNQMXXskv2A6JuFWmV3teiuY8Kyhaw2Ds4BDF0%2FVpQfREeH94yI%2FwerRjKd8RnKL%2B4gDq2YzIKUg7MzXnTzyUmbB7NQd4N%2BMzpNLAqMXwaiHb0IKoGmrCJt6uvmonU8bT3GM6cDeExQUGCaac%2FOvNxYO3qvjuGpTlxc2vkGJXHJNhTPfxah1ojGrpkB4Nw5N1ZANxf8ZYm%2BMCKnW044%2FRsLjKNfvlgjpZS9OayKZYETLYQLpIiww%2FmwQQdhL1jo1uXCTVv6IYhe5k%2B9dZ6G%2FLF9uteVnm65jZwDYXrDCQJwtvS34vfXBFYrint7lqUoqhuEpvaVlQxgGdSakX4egoSqoMsqYSoRhR%2BPJLjpEda0Hr85f7xEgYGQJ7QEMuMP42447DmKT%2FNJqSXGccF%2FpQLEoEv2xtAt2AB3jVR3oqyPdD55c04kXPBPYAFw8tZQyi420WDkCNJUoMJkiFEQsZ52pY3v%2BD6OBXZ4isgBnNcZ9QDOozRA4qFVsYvhQ1l0w%2BBTrgR4u4FiZ3n11enkIgec1OEOljFawvQP%2B0C01%2FdCDA8fLwtskJLeKaXW0iuY8LD2TczrBuRvA6Lr4ChH0VVV8HMDXicW4OkPeuMM0ryGY9U5LP5lulSOrbvQ6gYctU6rOZaT5DbkCGKi7I4oUuOJJLb%2F2iR6HetbGSUMUixf0pOG9xbW2p33WmKj0JMk6acJIbaQ%2FDty4eErMNO1P7UGnbp05%2BrPKk56EAjC9%2FjjVdoTiM%2FOqReHN5LyBDuNY9hXqPGP9qDsEb7Ej0pJBL99kQrJ62xtRg7zaGJJ4D1CeaKc9TFSNcckF3TLkeJg%2F7jHe95i45OClAwYaQVL2MPLO4cg1p%2BvIv%2FMfSINWlWpBPd%2BApDnkQ4JUbOpb9qjrNCWUDHIfySRhhY8AUby3qE9ziXTNcFFNM0mE%2BPpS5NLwXQ8cB5dBgoZKUwUqEn3tXgfYWf5TDcDoS97uWhhVBZzrVsyqoHadP1uLPnYWn9X8wS66Ij3Lhlv%2BfsPdMdhceTMdZbkb%2F5hDPE%2B%2FLvk4Yo%2BmhO8aRqh6XHvH77dqmf65tBLPpok%2FiEX%2BZCqnlfgDzod94wOVtHBYGjBRF%2FdEYIVsD9YKQbKiqmn2uJYTzY3o2oQAD6u13yeoCFMfV1845aeMEIo0Y4EBQewmHndCkcko7yuax9Fjc8722VeRkLBngdBmvZATi%2FQJ%2FUzRhdgbZlA%2Bm5EIWS8F%2F3YjPBPMzWfIBkPyHO1MpGeQDw05v91Oq6HeAuaWXCIRxMmJCDaBLi%2FvxoPOdvBBTRVjbGad3qmhoJH%2Basi2CbVhSYmm7c%2FoAEBkhdIIYD%2BDj9pWie3VwHBiasWnMUEO%2BW3Cf%2BbklZv9HlT80HRYnJU8bLLj%2FqLyV%2FGQk%2F7ieorUSYZJz0n0fMBtvmdlxSPtpZFKofb5K5NB54AUCwN70GwLWoSfc8L87MGM3hM0kijXBZb%2BineNrsac5k9G4%2BCDQvrvYkRGybd9sT7TwPcXfy%2BFZFtk3LmXCLEyhYj1fPlLmm3EVA6MgJ3ueYBKRQHbuLkuXAbbhxeAi6CGdL0eVQanN70bP7WXn7lrnktsmfDNdKog3YEyo2rJc8xABvPK6gOf7foKaF6DS5b5Vf97MLJ1TOEDc0SJBqyshkwVYOz8zICVSYpElPXU10s%2BEofVOmaHW6b6%2BMzVMRTB1YBRrFPcXEz2y5jSoFf31Sy52EVoLRiCX7qjtdWULTFokOP7GyALICk6Az%2B30%2BFR3tjwWZUXpxfiqy6LmWAmT62y8Bed6R1AsWxgHf2IBNS%2F0Oay3%2B9B6UrgAWoUl7RvCP%2B4ts%2BPeNrYdhrH%2B1zeiGKLwagW523bFFF4LMqexcNoa0M%2F048IP0KfGFAdwXk1HGYa7tANic37Z7D3d%2Byu0ntxHWLzQznKxynhfF70yhKB%2FmomC4YWw57eQ%2BT4eCzxmENHtBrTwapLgSsKxG3%2B8rZrhA7oWwaBdabyGT%2BODtCg80ljOBIO1Km05NGGT4K4AerxwyXt9tFHcAPC%2FoEoU%2F2d6vgJ%2B4JhxGr1irgDzLElncA233lkguLeXEgBp%2B7loU23AXXmftqwun4A%2B337ZYMFqZWTLyLeN0FhUUBK%2F5yeCB%2B0P88s%2FVHES7eRI8O0Ehbh65hUtU9edNAtq6DIaW9cSD%2BIDEZ9IRyWjJV0Wt%2FHqGkH5mdGJ3aMd%2F4ookrOdd4OByaKQzzLR7EyiSsHlSLjqN%2FHohrgHBTDPeAvUx0GHfMk0p680uu0fUNJcPyS9Wn0m5yIGqSuuTbly%2Bo%2B8U3PR5aaW2WeN6azZRjIPgwqGWuU04pZoFeVP51wh%2Fw8%2BPhyIhc8b8Q11tiCsFDqZwuTOK7Xm0AyK9KqWQQ4jQz%2Ft1qprIx3utVCMWO8dFdv%2BP8VTOv2wq%2B%2BfUkmIA56v4SDp9jAInirqm7pcQHXceSYpd6vrUzUGoWoFFNjhG3IwPgaZzGTXAs9NawBfDS373c%2BqGVLnKqlX%2Bo9qxkI5q9%2FsXz1Nxc6gjeOijZWqsK3AsT4WhDCJ7KUQC2mMxbXWUBkmwSEOj16yUtefuADAzXkYuJ55Dtgfc6me8P34tm1CtDMtHT0O5YPWtyJXi%2F8HlmkrWLrOvGjw%2Fti%2B%2FaTmZ8BZ3FLlZ4JxxxFiP9TX9vNn%2FYDNnMRMqGTgEpWamPNePZ0X4Yd4tAsJbFYvWVCMHNgCQUgeZRAnOKbkiLYbLFbFQpd0SHgqzBFFC7T0fMsDt%2FVP1LIOVk7glUMiUit2L0y%2BvXsI1E0bbM12JVkk2Q4TXAn0yZF73SVFyjmE7hPEus8H2JIbKdDM6gzlYc3Ehl3WHsUU2CJNGZTHt96yxv8D3tIPaCDMl3ChRcGDWsa1rwq8Z%2FAkChJjc5%2FQ11me4ZcffQ%2BSPRW4lc3EMBk4vx4ljdd2cJPkOOC%2Ft7A0QVibRh20IQ4whP2PsCl1XIWaDTO1hvTlim%2Be92jBvV8Kxu3LY7s%2Fpz%2FcZQIcF6%2FPjuiEAg50xCdb9Dkrchd16goHnjBM1t7jv21USb6GGixuB1lmNBU3%2Bt1HFzHdZLygTiXouY2AeA061kAoowO44jMTPD8JqJhPndxq28KnbBLGBsijHjapfncWENN02nwyhTrRlcmvK55M0K4mWr4frQAPQGjtC0R3oMM4Cgcb5KyAIKHQzpuH%2F2rRSWKAOMhPyZHE4pTUfrZzgnMbRjON7rPctkoKIUPTrX%2B0LI5pN5JYMzgybC2jceLN9x8gPkaAFc9G0yPBNbynMll2cGtbnCl9moRU%2Fd8B%2Fos8loJtavkjYRwJTm%2BNIlN%2F5KVf4iEsRe9e22ETfNdRnI7I2EuNCV4OAOy66xK2698uXVuAaaBqGmLWV%2BQBPymkd9fUOvrpwK%2FNe45zQAzyr8Uenily2I08OqsimbmdeLuvj9Z8rPRhjwJpT1EfQvK9azxo%2Bvflqc6B1n8teBBw7jbCYrtR5UVPhdv4f0YoMKC9OA%2BDOiwc%2BaCN7SqqLoaY%2F4wJiaaJqX1aw8EtQTBcItwcUBo1chjAaGoilB7Nciws7Ylo5BBFBeUaZNlp21dVqDTDfHPs0KcL4vR5B9W%2FZGx9aZz8mdjmxa6waW14t%2B420aQLppDsY96UTj4fXRekKLml9MNI2V1bvKIxuINRPzcpN4IZd%2F9p9jFFM6FHbCd%2FhSFVXyal1nuP77214REA0VziL0IlufLG2FrEEIuhXIvBovd36tsMe80eZzTYIp7saIlSJUzc51%2FtLOQgMBFFyGJ7kCki2SqkkkaQ6HFKtgc6WXXuGSYI0kQ6w%2BTtlFtwILH9s%2F207qrO5WtKydh%2FtPfD82jFnDmcua%2Ffu%2BxfGAKopY%2B1fVhQxc6EGoO6Hc0YLbIVfTIFAccbcuK5m2TknWv%2Bu3MV9g4LzY46BXjPBj7bviRNYq%2F5MTbeAfg6Zm8Dw8P4p92VSpYBth6tWkwuPxgo%2FskStpyxAkbBKkztAz%2BHVySiaSjjRx%2B7DnatL2Y2%2FqPASDLwjlfSJPDr0dIQKSTK%2Bmszdl8ZIt37WqA04HGPADmaOm7osYyYjzzJmR07Rm%2BjuAhJghmHoeJxK%2FqjpajAQKiSWkVtOLMjmYdr%2BrerA5GSJNvvpUPdH11R%2BAMHFbvYt%2FmViwdQpDIzVcAS1csP1Wwrqiu9TpRkmW9x7TusJTTFpLBkXj2imFn81jXPNzNAyyeRCQ6HqTNEIyBMk8TYNnv5o6WRm9gleJxDk%2FBBVujmR%2FCZaZT3qd4p9MKWN0D1Qh8MIXPJJ3N8G3VBKf5JDEL8u%2BSl%2FDM34rFwFBUbWO1NQOiCOi2ok0EhOPrM3dyhsh6yuzuvaR%2FiTkfipiAcYDkzlj43lxMTHHsfZWNx9ZjFlpdk%2FlWNBJGMDJjz1A380ss8bYx8dLySws8T4NPQvMqdalOx6HRyZoNNfxSqHwd6RIUJ5OYfDrDsOLsw4JuwUPOfGqkv59Vk22Z6TiOPPRaA8W0MvSxCERFh5X%2FRwEDvMe1V2cJpURcVVRYDIaEGo3vQ1B%2BH707Wuv8XS3nT2qmV0Em0b4E9zV4QT9bbNh3OQ9bVOpEjVJa2t8da6ZhbbVmzvadwZZxkTEkC5W%2BHKIDb8iEiheIFUNq6rBO8y5nMALaTcYPS9CdqcP0pZR8vPn4dFpG0f2O7otkI2vzBC6vdYuNOj3x6Jv7n%2Bc8I2UcxKaY9w%2FM4kxqrIJV5iKbAgdZ806KwXE55NAqkssq24rm7PRJBf85dd1CV4r0xcXjHF2YV%2FLGkN2tEzfQ34byGAUe%2Fi0PCDO1cn%2BYt98CHEysktgbxbzb2OjQvGbhG3aPTEkvNXl7KeDiEdKlSX1Inst5X96aUPbPA%2BqwederC2Bfeaz3ojpIJX8RQOlTO66xZBxEs31iPHMCW4PXkZl%2B3fZXO6HZ0VsSAkh9oL21YiSycX8%2BWmJMN1imGeuYLGDZ279Rk6xB0Eh3ex6cXjPdSq0YwPHm4pdLOx0lUGIMvMuYnAoa7hohosKbPDypjV5TydfJNauZcvovsvrzc97wm%2F7tKnS%2F2T15gAXxsGvz3eDB4Yb1l3jBZ7XzfUDymsGas0Wp4NR87nnEh%2BgaXBBbiJzgcgfmV8BmIpRy80xcgVj4Mpo5Kwjx1N1wqJN8ijJA3zA0Bd7foYaYtmWMzsWfS4F1H9Y9tMzMtmYZOeOR4NxEq32nYWp%2BaAmAbWnnkVpcALiyklcODUYNFgmk50QiXBQ%3D%3D"
+	context.EventValidation = "mPSYb8YL1z5FFYTF5ut%2FZmvxcAf0d%2BzC%2BQ6t7NLs97Pnik6GCgSIC%2BuQNhHFbJScQNlNJjxsiZ%2F0R8FYTJND5MfMFWV14l%2FbcqpmYSG1vq8D81OLACRl4xRWtH2ZtS15EKvTL%2BPyZdTGL9wtXiq%2F6A%3D%3D"
+	context.Additional += "&ctl00%24content_placeholder_body%24BusinessSearch1%24RadioButtonList_SearchType=Limited+Liability+Company%2FLimited+Partnership+Name"
+	context.Additional += "&ctl00%24content_placeholder_body%24BusinessSearch1%24TextBox_NameSearch="
+	context.Additional += Name
+	context.Additional += "&ctl00%24content_placeholder_body%24BusinessSearch1%24Button_Search=Search"
+
+	return context
+}
+func CreateContextQueryEntity(Entity string) AspContext {
+	context := AspContext{}
+
+	context.ViewState = "wjJcySXdnT3Nz2Xw3p5X1c45CxCCvCbuZ5KhW73YGVz1sj15QU3n0cKE5me13IueWlnSgflrhoR7Sk%2FmCzS0ZmGFx%2Br5%2BWb759GzwO7xIXIQwfFawPM5eb5hTtKZZYdhFpGl8xM1oqmlVTO3KgMoxX602EC4govEQA1FWqA8oYvpVgrZNG0vk4Say8CWbQWOQbvUs%2BC7B7UagqUAohKZdyxJz7zURi6Lrp5qHqeT5VskvFNg7rO2k0C5lERfqCdVDMNNQopgf86%2FE9JaxubdZiCsDfhr9yIp2CSfrQZ%2Bps4%2B9MCMY2j%2BTBswwXaYAr8WCNbDD61HD8aVkvCqXny%2F5LshWI7T1Y%2FYNQU0Yo4BKuDCZSGBqoBFAiH1YmfSnQxUCYL2fcvIHJ7imPR0r%2BYDulRu05pW46LrF5OTFZmYXS%2FWIS1ws5LYaImkdZPTruYZ6xzTkbnaaTPevkMKPCiZkPAUD53YCQrGbX8%2FWrTi7CgVxchQ9T5Ili27EByooVsKul6EYKt2ccPGCO65s8ywlm92E2gbiGudpffpNeLfJfSU0nfGTsLa4Ho70djEyuc2zE%2B6Uw2qsw1yaEAaT1VLWNSibf8HqFfZ7kgO6bjM7zAsxbPoBxAo14jSeLu0GNGkIxxeasVfyXc5%2FFCp95OrLUuoewhegvVJZP20r3tGzAdKIupgKxSw5D%2BleUuaglnuo0JLj6xBjlwFgfrIETpogdwN6p%2B64iKbZRbKyVnpGs5LL73cNHo7TvbeTswyGNoC7hsv74aoPcsNgrPUK9y%2Bb%2F9wR9tEOhCBoE9JQ2R7MU49eziBEsLNlbKYVUJ69A%2FjhACQoXnWeR4mIgdowid0Ie5FX8XqOP7opo6HAk2vvg6IooOMKiJMWQqqDekgPL5f2PV7je2%2B1cZYxi3HpXkyMYx19YOlg%2FRSPQBTJm8IAKbW%2F65qExT3FFE9%2FBfpxRVSUo7ftf5EtY7jXoRjULvJaVbKMelQDXLQkFKHj3nNts6MhsQVKrkIhwqrpCkPrImTkyF60nsN64jy%2F0R2f7%2F6%2FmxChlPLJ09TJhBe9WXkp72IagsbN42TqddmVq2zjytYRU%2BFE4aZq8oWQjEEqyOGEN6JVeyHGcG5H%2BpasbFRRzumfof3XtyQnMaq2bMErsUUAgMS9a8IyEMuW7f5Tyfk6W0xtTSQxslXmNWj27c11yUytVQiL%2F9aFFPVNOdeOXhIsN8DIw3p6Q66C4DZJNBP7VduhfZvL%2BFdGypKyiigHg1x9mFrKdgd%2BPqNyvvkHzcH6aWQI5QyFOYi%2ByVI6MbZq0cNdE%2FhJDFWHhHXbbhahgRLRYMfOU9iOv4N2ftV8v2bUcZJ3616UnEdrkoV%2B4cu1j8ftoourKCSFNEIEB%2FdxiOoyIii6avuW3TkeCPkGUZb3qf5VM%2Bpl92f9gQyWIVpeK95WyUDYoT%2FAebsZcjjyPIldr4PauzlfrV0Zcwnz1LjZIdEMqb2ADkcQDDZVZL5OVHQBQuO7cNs3TxlYYF1RRyqILM4vYF6iHs%2FeqsqNniygcDAQ5p2QZezGbiyPcow1h%2FPDTu%2FAXGo4em7Y5W3ilxgQ9Yjb1fTXxld6a2N30X1lDKvrlsq5E4hoEJgJyV964FPB%2FrmoSPNBy7WAh80lIzncfKKz9mlffaszbYc3T09FtXzwHVReAtaaKZvgN0tQz%2FuHAbpKhAw4%2FpEUJ3gKVCdKlK%2BFQziiv2recJ3jHtAm7PgnL85%2BC2hTz5zo%2Fy2Kj03aCtMyH6tdwQVAtaKX1cMzUqxwBFyA2DT1BQ0SOuD4phRczTF%2FOIw7xatYoQblMiBVOSMGUzvijfy9CSIUYY4MMzSM3PrPbGFX6FJ%2BxH7CNNGaKBt299a80HU45gKVllKjhMvS%2BNE1amGoPfTwGCXC26urxO9CTPmXmmsNta77%2BV8zX7UbFq4s0z1bK8uSoVSd2kFUh0eUAVEZ3r8J6tLqBe3NbUHl6WMBMjGFJemgZkrcBWGQ5Ta8nqvT9r9VRLsb8%2Bty65qSTulH%2F5rzPnD5%2FLey26ZEukCaaeWlJE0UaYxuLxdHs5yZtaaD80VfkPv6wAivYDVuOYm7yG7ZMXmf61uA%2FXOibe9BFYM7EryYCu19PGukeMBkR%2FE0rWvEP%2Bk0Tq4u2vwiEiaPSAlrRJ4dIBUknwBm4OjgiBri2YMXVio%2FoObQu9TV6sZqhvHn%2BORbh8Q%2Fmss2ugQK5DlI38UoLyurlltaafjvnwJQPlkD3cRBbIaTiJiGiIC3I2yofr2Se9C83OkvfeslEPE6%2F3wTkVqKKMGMDkBBLrbB%2Bu0kxw1flO3N8zPIex0XKxH7G11np8FRsNAQuwLjjU7mrsY3lO1WEOcQIeAXc6nYaGaiB2SvlvzhrcnjFVbbKOHHAuTPzpiPHDUQIxI%2FxRPx%2FOnJK5QtgUGfbHy7GpProZeSvV%2FfAWJSFH0%2BEkbf3%2FsDQts9LH7YJlDV6fBK84II6uifJX4vyMUnQuoG%2FjLGTZStV16wtQAyO9XTngZCBjHl2PfWZjHZd%2BsAV2VtuDKTgaisIBwK7CMtxU6zV5YHWdQLVdsj6Tt4dOpQQ19W7LKEvXyndNaZ0KMn367iSil8HrpypMD0mhHZmxHP0828cdpM0Y6Q%2Fjzknbi%2FW02vtK53h1Kei0KV9nFDXb6IhkdELvBaAQHcxSct6mfGDzuZz9k5llS7Gdadvjt9vlbnDFfI5LICYmnFNiDlkM0j%2BQlyI73%2Fm%2BQ8J1KgGnOOe2MD%2FcRrWuGws94H0ldChuaurg4XkyUKkjPukQybFxgJtWWYlsEbUexZy%2BM2PMAoOKUxsuc0hWfg2VnfzCUJntRdk0zy%2B7gYp2T08F4BhyEJexZVwT22EhfDi4dLCx8s4M1vWI%2Bqzknw6YDpsMbAZKUCdvFk2VkEzuT2s7GlYnCWKfiI2AODXGKebZjKjAjwigdz%2Fh0F%2Bk5x6I7Pql2q7E70ZWBiGi5WztZwhUEPmciuP2aEtEVUhwjDwYElMdhD9z5LivW%2BxBNu%2Fwwdi%2FuaoKiC%2BK%2FVAv4rNTtMZHHOcxmvysUo1d2tcsRycCP6OGOx%2FnKDtnNb6%2FSfTluzfet6T6xEj85Z1WuxLaiYa%2BSgRttGHfpPHGMuolxQBmqo0itcsHifP%2BffonjgKITseUSBJKnNXmxIL4%2Bhkei8lyPqSiKotj7AMCH0pQkCI3%2FtOAGRSxG2fYB%2F%2BCscGEwQkLwsACkyRgeG2jv0xRVcb7GyGh0EiCgaRT6w2lBAsWV90NPdjKlGe4bQRR6qSm%2BkFYAB437XyCV2O24%2Fx6u1TRteQwt9lYQgBZ9F%2BqZGiCzt19CV%2Bk1VOjhxoTgrbQ8Aaj9UAW0PX0qx8kvgPSebVYuVryl0n6qh3OwxFMYXFklhIN4pa9MNTrVRXLpJs1hC7qMKhd0qx2OTuBHWuypFDLRgJRkelckkM49425%2BoDPqWlUiZ34yxbLr4iDyjkLII2kmXHrNVSFeYGwRXkLbHsRGCVuUhW3B6CSWEBRQRBF%2Flu5vi4D9dx%2BxziRlCDLgG4HMPHBEuLqbqcJG2fB8EGrJAskkN%2BI7O4MWcjAy%2BpGbgJHsBXDs6OkEiXwZjzHLRHjdbp3x%2FiBTX8xAMPZK69HkByJ7QRDTbZmcjsJorbWi0ooUB77f8VUrF5K5GnI4bfeTryIxHR9KaiXSMlveZbtK1GwW2OlSDmNZQ7HBP7EM7e3FdiWcm%2F68jV4D5%2F%2Fq%2FgHsiJIuOiJ7Sg22rmsmbVEkf2bInh49G0fklCQ1jZ1jse2F4UYhvq2NdGIr7iIhmKWDKUivloI7YgniSGYp7yoszYhpyMw3mgQTztSi9FcVdNd1VsacVNglD%2BKB0RfbVlQ0ymOiBvPj%2BMS%2Fzk8F9Tyyb%2BQwdLe9fbCRC2chg1rLBoL7jeX%2BztSa0q%2FgYs1nRi%2BTeocwdhC9d%2BfwUUhXhJaSyFcA1GS5ASxDP4ECBizKvLR5bHl%2FW8swlcUdi2%2FZSuVsZAVgiBzLtNq5RxLH72zaIKds8FzP6S30lT4ueIXpov0VqrGfzCWWQllTDcPyKT%2FO%2F5rtRcuBVpz666znhsx2yju5njtme3OdegqkCueYJjfpN3sZsi9dJW6%2BnDoEcny5HJ8oUGnbdFaMW%2BDo6XabuohmpGnACAkomUHk5JSsddhPTDs4ZQCGNF6cjzKRjJ8giTpkbKAH3owrVdbXjIW88GBgwVWiH7R57iGeIJGWzbQkXdKGilbgOv%2FhoqGxB%2FM4YGAPlRIBFGqE%2FBG1lqvG7WDhFW2ZR%2FaunG3guYerjerC9N9TNDPIFgLtOIVxH5j3yAOZngdtRgA0Pl%2BCpaDMKu2A9zuGqEA%2BI2vSKPbDGe6hpYs12gRVHCA7E37nFvcFdwRQrGj88vXcHnRCHl%2Bu5r3Nfjal8vWOgoT0fAyNahycclpgpB%2F8IwqkVmNCCixxSSBTH1NUmXQJzjH%2BqYL4tAPeELDa0UT9RG4PUolbQKSu6O%2Fls5gu8DRVPRixZS1TYQaRhA%2FrZXEH3DvYh1IycvpCsC1dOBs525YIcWnQKzXZPkkX3JDj%2BW0IszXkwvdFUZRla5YeQvTUt1j9Yh3OHkJScY614IyoQ5UGMB%2FVxw4In3Mv%2BrK2gV7LxNXKqCK12Vp6q8qcqoYP3PRX9AbdY2uLKHAherCw9uluKjRSTrxXpmq9q55PDgBYh5N0HPOXhHdoE4muwRlaEiLwMWRkcX9QMJTDOgFyv1obJa4T3iSlkAT7qOUuNWxwSwIXm%2Fo6Bfh7Xa1vPavayJ%2BoJEAj3Ef37sIp2Y9E0RX8FWVihILnEscBsbKXOGMZosX4YxlhPVLX8%2FucKcQTM85e0F%2BLbYSH2oyaS34pDjiF%2FrZfnSn0P0uurH%2FhE7jtdCIaL71Kh1WqqufbxQG%2FiIisaSxYzRyfNzgJED3JZ3DFlLi%2BC0OLe%2B3sFi95vqEmfRTACNf81bR7NoFdqwvKJymR%2BkZZVaEkLesdVqR1xZxqCRL7K2VP0VN7Dh%2BxceJj9uMLkI1Ls31nbUItzed3jhiYGThQ%2BGOCGVPjIWZcs1ZoYN5kHxE6Y0LgpgrVSE5zWhzlkuEeUCX6jdV2nom19Vjnj%2B1Qp%2BMzBDgC8m04drzPX6Tqrw%2BpLez7ReMQKdWqevaYlLZsml16ZR49p3pE5N3qi9QBYjF9fnW1vsPom6FXTw%2BTiMYomvkcadX0aRtNxy9JK4H4PYgxKCVvwiGUB2Be9CTe8%2FB9PLYozsAGAn5hatqbRikOTxVB30QKrZrTXhCvovD%2FtSmOSyhfCjWiT0MKPJlfKIE8Dv5tkpgd4FlrlLXS3qlqQTRU36ybVS1ZEgIUgBfN%2B8OYkZnIAH2QX5bZq%2BkCOCVlI4GYyMSC1OdRG37X%2F5s49LM4fQp7bFdGxPX%2BsxFJ8Y7yai26aZOYlSLByOo20zbhDUomHHgvHp1B6NFFQMLuK2%2FR%2FhsmD1sM0ATKOhQA6iOHVOWOMUcTK9OXY9vWBFpgjEEKLN978bFkVWeyWY94Vt9GmAOQjXArb9W3PcAiAtjI06zoVW%2BCI1p6Xmlpu6SXEfr2QIUXu%2BIrtbkLPdJaBwFaIxMkhJBPOHJF32u5X2%2FKvwEsYyUImgoKUSlGOcXpa1GUux2pMm0dDBT2xNSa4w6thWBByXAfG2fdSbZwUj%2FESbdO3om4WG3kxdPjys%2Btd%2FyF3kqKBXCqf%2B7Ja0BoscvnwG6fgWKDLyfvSHAgpPpmp2s1KaD0F6sB6uidw4I4vCUJ8ojEi82g1UB5OKMBqpwdW%2BkC7agaV%2BohCT%2BZA0TUFw7vCBr0sOrMp0oAHD3ILGwPlL0WAoOpaAIOkt6hVxbMvb4m%2F91q57t20N6asE3BaQh0hPxLn2ERvY%2F8iEoM5HiPcK2Rn8tEF108MaonggnGdPBPJ8xwQURxdR%2BJqM3oXMKrxHwvlmYkEcocula%2Bi1xEq9%2BQ9ZpqIS5uVscMw%2B1Rwac3ZNA1hD9f7pm3WljFx4QO9vjG4lYyXa19zh6CPTYE7hgA3hYoOmMJP%2B7WXkHZSigBa7zdUXwFPy5vnrPgkWBF8B6jo01Sa0rCnmDjHiAHqx7%2By%2Ffy98eRV73wBKSAc52KnY%2FJnSKrZY1HmnvxqxlkDWPhFYkI%2F9IX7zz6MIyHOFPyBJTFmDGMYVwETMrACxE8%2FEi0H7c5hcT%2B%2FC1rPKrES8fzkXOMKCKE%2FFMuiwm5mcVWXV79nTUkJwdUp5Bf44kXBqFSOkbv95djFsoxK6Nnyri5buILVXzZIPXH%2B2XENjZN83b%2B%2B%2BPwW%2F8YdrWQt3wRQinvsQCdczHs9%2FyfhF8MgJwVUqSIBzGfZlp%2B5PMwYqkDRac2aufeFvxGy9T%2FrcVBSa0GxS6DxLCACyeS0jEMhPLtl%2FhVhMgjtTDAE5BaEdXx1dHVQc%2Fp0nqQS7b2G%2FVjJYtG2j0gKFDn%2F9NoDcv3gjNkv9yjo4KtjEF%2BsMdkxxve474euqsOSfiiq%2FjcFTploP10cEf2u1f2NDnR1kfdudBmBagiFqbT1oEqTGTuP2AbfKf1J8bN2O95OH%2FMStEf2ZoDpkC0G3RdpS4aEM6jrGEc12irbNw%2Bnv4y3Q9rt3Nmshz1vaAlye0kSi%2B%2BihU76obNfZFyZ4WRoT%2F9T43deDU9EHK%2FjZ7H0kQmOxA2Onsn2jdHsfziO%2BkAO8fYorFeyY9XVSkTOX2vJAmWHj9jCKEJgfWSPe6%2FdHkqhr8IIlVyqSSmdmcgo6hkufqvOk%2FiwO6xQu3j7EKMBOZZ41vaI9SinT4ySiI1WkHvHNnFUtckLtVuG0%2BW3cXmmNB8PsHPm%2BXYk%2BgHN9DnhOKjOHBUFg%3D%3D"
+	context.EventValidation = "g7998XebdfbWJ%2B6GMcMGkEuoIAva2VLR8z%2F91h36vJ8azhZSXafGu99ZyoILjka6CaI9gidi40UR%2B7mVMlrqSgaZ9q5B15OR8wiBSRNWcQFw3iN%2BhR1ihUJnxS3ZFLRaOKhXA6cHBkwvwCXSl0n%2FYQ%3D%3D"
+	context.Additional += "&ctl00%24content_placeholder_body%24BusinessSearch1%24RadioButtonList_SearchType=Entity+Number"
+	context.Additional += "&ctl00%24content_placeholder_body%24BusinessSearch1%24TextBox_NameSearch="
+	context.Additional += Entity
+	context.Additional += "&ctl00%24content_placeholder_body%24BusinessSearch1%24Button_Search=Search"
+
+	return context
+}
+func CreateContextFromPage(doc *goquery.Document) AspContext {
+	context := AspContext{}
+
+	for _, attr := range doc.Find("#__VIEWSTATE").Nodes[0].Attr {
+		if "value" == attr.Key {
+			context.ViewState = url.QueryEscape(attr.Val)
+			break
+		}
+	}
+	for _, attr := range doc.Find("#__EVENTVALIDATION").Nodes[0].Attr {
+		if "value" == attr.Key {
+			context.EventValidation = url.QueryEscape(attr.Val)
+			break
+		}
+	}
+
+	return context
+}
+
+func GetListing(entityNumber string) (Listing, error) {
+	context := CreateContextQueryEntity(entityNumber)
+
+	businessType := LLC_LP
+	if 'C' == entityNumber[0] {
+		businessType = Corporation
+	}
+
+	reader, err := post(context)
+	if nil != err {
+		log.Error("[Request failed] %+v", err)
+		return Listing{}, err
+	}
+
+	listing, err := getListingFromEntitySearchResultPage(*reader, businessType)
+	if nil != err {
+		log.Error("[Failed to get Listing] %+v", err)
+		return Listing{}, err
+	}
+
+	log.Debug("[Listing: %+v]", listing)
+
+	return listing, nil
+}
+
+func post(context AspContext) (*io.Reader, error) {
+	client := &http.Client{}
+
+	req, err := http.NewRequest("POST", *keplerUrl, strings.NewReader(context.ToString()))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.95 Safari/537.36")
+
+	resp, err := client.Do(req)
+	if nil != err {
+		log.Error("[Post failed] %+v", err)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	log.Debug("[Response] %+v", resp)
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if nil != err {
+		log.Error("[Error Reading Body] %+v", err)
+		return nil, err
+	}
+
+	var reader io.Reader
+	reader = bytes.NewReader(body)
+
+	return &reader, nil
+}
+
+// Main Functions
+func ProcessCorporation(name string) ([]Listing, error) {
+	// Sanitize Name?
+	context := CreateContextQueryCorp(name)
+	return getListingsForContext(context)
+}
+func ProcessLlcLp(name string) ([]Listing, error) {
+	context := CreateContextQueryLlclp(name)
+	return getListingsForContext(context)
+}
+func ProcessEntityNumber(entityNumber string) ([]Listing, error) {
+	listing, err := GetListing(entityNumber)
+	if nil != err {
+		return []Listing{}, err
+	}
+	return []Listing{listing}, nil
+}
+
+func ConvertToCsv(listings []Listing) string {
+	var b bytes.Buffer
+	w := csv.NewWriter(&b)
+	w.UseCRLF = true
+	for _, l := range listings {
+		var record []string
+		record = append(record, l.Name)
+		record = append(record, l.Number)
+		record = append(record, l.DateFiled)
+		record = append(record, l.Status)
+		record = append(record, l.Jurisdiction)
+		record = append(record, l.Address)
+		record = append(record, l.CityStateZip)
+		record = append(record, l.Agent.Name)
+		record = append(record, l.Agent.Address)
+		record = append(record, l.Agent.CityStateZip)
+		record = append(record, strconv.FormatInt(int64(l.Type), 10))
+		w.Write(record)
+	}
+	w.Flush()
+	return string(b.Bytes())
+}
+func ConvertToCsv_Brief(listings []Listing) string {
+	var b bytes.Buffer
+	w := csv.NewWriter(&b)
+	w.UseCRLF = true
+	for _, l := range listings {
+		var record []string
+		record = append(record, l.Name)
+		record = append(record, l.Number)
+		record = append(record, l.DateFiled)
+		record = append(record, l.Status)
+		record = append(record, l.Agent.Name)
+		record = append(record, strconv.FormatInt(int64(l.Type), 10))
+		w.Write(record)
+	}
+	w.Flush()
+	return string(b.Bytes())
+}
+
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+// Route Handlers
+
+func KeplerSys(c *gin.Context) {
+	command := c.Params.ByName("command")
+	log.Critical("[HandleSystem] [%v]", command)
+
+	switch command {
+	case "shutdown":
+		{
+			c.Writer.Write([]byte("Shutting down..."))
+			c.Writer.Flush()
+			c.Request.Close = true
+		}
+		break
+	}
+}
+
+/*
+func HandleIgnore(c *gin.Context) {
+	// Don't even respond ...
+	c.Writer.WriteHeaderNow()
+	_, _, _ = c.Writer.Hijack()
+	log.Critical("[HandleIgnore]")
+	c.Abort(-1)
+	return
+}
+*/
+
+func KeplerLlc(c *gin.Context) {
+
+	Name := c.Params.ByName("name")
+
+	in := struct {
+		Format ResponseFormat `form:"Format"`
+	}{}
+
+	success := c.Bind(&in)
+	if !success {
+		c.JSON(500, gin.H{"Result": "Incorrect Parameters"})
+		return
+	}
+
+	log.Critical("[KeplerLlc] [%s: %+v]", Name, in)
+
+	// Input validation
+	if 0 == len(Name) {
+		c.JSON(404, gin.H{"Result": "Not Found"})
+		return
+	}
+
+	listings, err := ProcessLlcLp(Name)
+
+	switch err {
+	case nil:
+		switch in.Format {
+		case Csv:
+			c.String(200, ConvertToCsv_Brief(listings))
+		default:
+			c.JSON(200, gin.H{"Result": "Success", "Matches": listings})
+		}
+
+	default:
+		c.JSON(500, gin.H{"Result": "Fail", "Err": err.Error()})
+	}
+}
+func KeplerCorp(c *gin.Context) {
+
+	Name := c.Params.ByName("name")
+
+	in := struct {
+		Format ResponseFormat `form:"Format"`
+	}{}
+
+	success := c.Bind(&in)
+	if !success {
+		c.JSON(500, gin.H{"Result": "Incorrect Parameters"})
+		return
+	}
+
+	log.Critical("[KeplerCorp] [%s: %+v]", Name, in)
+
+	// Input validation
+	if 0 == len(Name) {
+		c.JSON(404, gin.H{"Result": "Not Found"})
+		return
+	}
+
+	listings, err := ProcessCorporation(Name)
+
+	switch err {
+	case nil:
+		switch in.Format {
+		case Csv:
+			c.String(200, ConvertToCsv_Brief(listings))
+		default:
+			c.JSON(200, gin.H{"Result": "Success", "Matches": listings})
+		}
+
+	default:
+		c.JSON(500, gin.H{"Result": "Fail", "Err": err.Error()})
+	}
+}
+func KeplerNumber(c *gin.Context) {
+
+	log.Critical("[asdf]")
+
+	Number := c.Params.ByName("number")
+
+	in := struct {
+		Format ResponseFormat `form:"Format"`
+	}{}
+
+	success := c.Bind(&in)
+	if !success {
+		c.JSON(500, gin.H{"Result": "Incorrect Parameters"})
+		return
+	}
+
+	log.Critical("[KeplerNumber] [%s: %+v]", Number, in)
+
+	// Input validation
+	if 0 == len(Number) {
+		c.JSON(404, gin.H{"Result": "Not Found"})
+		return
+	}
+
+	//var err error = nil
+	//var listings []Listing
+
+	listings, err := ProcessEntityNumber(Number)
+
+	switch err {
+	case nil:
+		switch in.Format {
+		case Csv:
+			c.String(200, ConvertToCsv(listings))
+		default:
+			c.JSON(200, gin.H{"Result": "Success", "Matches": listings})
+		}
+
+	default:
+		c.JSON(500, gin.H{"Result": "Fail", "Err": err.Error()})
+	}
+
+	return
+}
+func HandleKepler(c *gin.Context) {
+
+	in := struct {
+		Name   string         `form:"Name" binding:"required"`
+		Type   BusinessType   `form:"Type"`
+		Format ResponseFormat `form:"Format"`
+	}{}
+
+	success := c.Bind(&in)
+	if !success {
+		c.JSON(500, gin.H{"Result": "Incorrect Parameters"})
+		return
+	}
+
+	log.Critical("[HandleKepler] [%+v]", in)
+
+	// Input validation
+	if 0 == len(in.Name) {
+		c.JSON(404, gin.H{"Result": "Not Found"})
+		return
+	}
+
+	var err error = nil
+	var listings []Listing
+
+	switch in.Type {
+	case Corporation:
+		listings, err = ProcessCorporation(in.Name)
+	case LLC_LP:
+		listings, err = ProcessLlcLp(in.Name)
+
+	case Corp_LLC_LP:
+		corps, err_corp := ProcessCorporation(in.Name)
+		if nil == err_corp {
+			listings = append(listings, corps...)
+		}
+		llclp, err_llclp := ProcessLlcLp(in.Name)
+		if nil == err_llclp {
+			listings = append(listings, llclp...)
+		}
+
+	case EntityNumber:
+		listings, err = ProcessEntityNumber(in.Name)
+
+	default:
+		err = errors.New("Unknown Business Type")
+	}
+
+	switch err {
+	case nil:
+		switch in.Format {
+		case Csv:
+			c.String(200, ConvertToCsv(listings))
+		default:
+			c.JSON(200, gin.H{"Result": "Success", "Matches": listings})
+		}
+	default:
+		c.JSON(500, gin.H{"Result": "Fail", "Err": err.Error()})
+	}
+
+	return
+}
+
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+// Middleware
+
+func SystemCb() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		command := c.Params.ByName("command")
+
+		switch command {
+		case "shutdown":
+			{
+				// Wait until all filters/handlers are done
+				c.Next()
+
+				// Notify quit
+				close(quit)
+			}
+			break
+		}
+	}
+}
+
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+// Create Router Paths
+
+func CreateHttpRouter() *gin.Engine {
+	gin.SetMode(gin.DebugMode)
+
+	// Creates a router without any middleware by default
+	r := gin.New()
+
+	// Load templates for rendering pages
+	//r.LoadHTMLGlob("html/*")
+
+	// Global middlewares
+	r.Use(gin.Logger())
+	r.Use(gin.Recovery())
+
+	// Specify 404 (Not Found) Handler
+	//r.NoRoute(HandleIgnore)
+
+	//
+	// Define Kepler API
+	//
+
+	// Retrieves a detailed listing for Business Number
+	gNum := r.Group("/number/")
+	gNum.GET("/:number", KeplerNumber)
+	gNum.GET("/:number/*etc", KeplerNumber)
+	// Retrieves a listing of Business Numbers
+	gLlc := r.Group("/llc/")
+	gLlc.GET("/:name", KeplerLlc)
+	gLlc.GET("/:name/*etc", KeplerLlc)
+	gCorp := r.Group("/corp/")
+	gCorp.GET("/:name", KeplerCorp)
+	gCorp.GET("/:name/*etc", KeplerCorp)
+
+	//
+	// Define System route
+	gSys := r.Group("/sys/")
+	gSys.Use(SystemCb())
+	gSys.GET("/:command", KeplerSys)
+	gSys.GET("/:command/*etc", KeplerSys)
+
+	return r
+}
+
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+// Main
+
+func main() {
+	log.Critical("[main start]")
+	defer func() { log.Critical("[main end]") }()
+
+	flag.Parse()
+
+	InitLogging()
+
+	// Listen for async Quit request
+	go func() {
+		select {
+		case <-quit:
+			log.Critical("[Quit Gracefully]")
+			os.Exit(1)
+		}
+		time.Sleep(time.Duration(sleepForQuit))
+	}()
+
+	router := CreateHttpRouter()
+
+	log.Critical("[Starting Service] [%s]", *httpListen)
+	router.Run(*httpListen)
+	//log.Fatal(http.ListenAndServe(*httpListen, router))
+}
+
+func InitLogging() {
+	// Customize the output format
+	logging.SetFormatter(logging.MustStringFormatter("▶ %{level:.1s} %{message}"))
+
+	// Setup one stdout and one syslog backend.
+	console_log := logging.NewLogBackend(os.Stderr, "", stdlog.LstdFlags|stdlog.Lshortfile)
+	console_log.Color = false
+
+	//var file_log_filter = syslog.LOG_DEBUG|syslog.LOG_LOCAL0|syslog.LOG_CRIT
+	//log.Info("[%d]", file_log_filter)
+	//file_log := logging.NewSyslogBackend("")
+	//file_log.Color = false
+
+	// Combine them both into one logging backend.
+	logging.SetBackend(console_log)
+
+	logging.SetLevel(logging.INFO, "gokep")
+}

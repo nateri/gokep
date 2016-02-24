@@ -1,0 +1,45 @@
+{{define "dbg"}}
+
+{{template "doctype"}}
+
+{{template "html_begin"}}
+{{template "html_head" .Header}}
+{{$host := .Header.Host}}
+
+{{template "table_style"}}
+
+<body>
+
+<div id="content">
+	
+	<div class="table_data">
+		<table>
+		  <tr>
+		    <td>UUID</td>
+		    <td>Name</td>
+		    <td># Recommends</td>
+		    <td>Recommended By</td>
+		  </tr>
+		
+		  {{range $key, $element := .Users}}
+		  <tr>
+		    <td><a href="{{$host}}/kbize/user/{{$key}}">{{$key}}</a></td>
+		    <td>{{$element.Name}}</td>
+		    <td>{{$element.Recs | len}}</td>
+		    <td>{{$element.Recs | printf "%+v"}}</td>
+			
+		  </tr>
+		
+		 {{end}}
+		</table>
+	</div>
+
+</div>
+
+<b><b><b>
+<h3>Return to <a href="{{$host}}/kbize">Kbize</a></h3>
+</body>
+
+{{template "html_end"}}
+
+{{end}}

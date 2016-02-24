@@ -1,0 +1,11 @@
+{
+	"ImportPath": "github.com/nateri/gokep",
+	"GoVersion": "go1.5.1",
+	"Deps": [
+		{
+			"ImportPath": "github.com/gin-gonic/gin",
+			"Comment": "v1.0rc2",
+			"Rev": "b3878c2465f34fa1772f666fea9adf05f1dca727"
+		}
+	]
+}

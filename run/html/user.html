@@ -1,0 +1,55 @@
+{{define "user"}}
+
+{{template "doctype"}}
+
+{{template "html_begin"}}
+{{template "html_head" .Header}}
+{{$host := .Header.Host}}
+
+{{template "table_style"}}
+
+<body>
+
+<div id="content">
+	
+	<div class="table_data">
+		<table>
+		  <tr>
+		    <td>UUID</td>
+		    <td>Name</td>
+		    <td># Recommends</td>
+		    <td>Recommended By</td>
+		  </tr>
+		
+		  <tr>
+		    <td><a href="{{$host}}/kbize/user/{{.User.UUID}}">{{.User.UUID}}</a></td>
+		    <td>{{.User.Name}}</td>
+		    <td>{{.Recs | len}}</td>
+		    <td>{{.Recs | printf "%+v"}}</td>
+			
+		  </tr>
+		
+		</table>
+	</div>
+
+</div>
+<!--
+<div id="recommend">
+	<form action="demo_form.asp" method="get">
+	 First name: <input type="text" name="fname"><br>
+	 Last name: <input type="text" name="lname"><br>
+	 <input type="submit" value="Submit">
+	</form>
+	<li>
+	
+	</li>
+</div>
+-->
+
+<b><b><b>
+<h3>Return to <a href="{{$host}}/kbize">Kbize</a></h3>
+</body>
+
+{{template "html_end"}}
+
+{{end}}

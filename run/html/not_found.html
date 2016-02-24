@@ -1,0 +1,17 @@
+{{define "not_found"}}
+
+{{template "doctype"}}
+
+{{template "html_begin"}}
+{{template "html_head" . }}
+{{$host := .Host}}
+
+<body>
+<h1>Page was not found</h1>
+<b><b><b>
+<h3>Return to <a href="{{$host}}/kbize">Kbize</a></h3>
+</body>
+
+{{template "html_end"}}
+
+{{end}}

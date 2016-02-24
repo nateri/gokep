@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+<body>
+
+Search: <input type="text" id="input_search"/>
+<button id="searchButton">Search</button>
+
+<p id="statusElem"></p>
+<p id="output_data"></p>
+
+
+<script type="text/javascript">
+
+onload = function()
+{
+  console.debug(makeSyntaxHighlightHtml({"Status":"Idle"}));
+  statusElem.innerHTML = makeSyntaxHighlightHtml({"Status":"Idle"});
+  input_search.value = 'irvine eurocars';
+}
+
+
+searchButton.onclick = function() {
+	
+  var searchVal = input_search.value;
+  
+  var displayResult = function(result)
+  {
+    // Display
+    statusElem.innerHTML = makeSyntaxHighlightHtml({"Status":"Complete", "Found":0});
+	if (result.Matches)
+	{
+      statusElem.innerHTML = makeSyntaxHighlightHtml({"Status":"Complete", "Found":result.Matches.length});
+	}
+    output_data.innerHTML = makeSyntaxHighlightHtml(result);
+  }
+  
+  statusElem.innerHTML = makeSyntaxHighlightHtml({"Status":"Querying", "Search":searchVal});
+  output_data.innerHTML = "";
+  getSearchResult(searchVal, 4, displayResult);
+}
+
+</script>
+
+<script type="text/javascript">
+// Buttons
+var searchButton = document.getElementById('searchButton');
+
+// Output fields
+var statusElem = document.getElementById('statusElem');
+var output_data = document.getElementById('output_data');
+
+// Input fields
+var input_search = document.getElementById('input_search');
+
+
+getSearchResult = function(searchVal, searchType, cb)
+{
+  var req = new HttpClient();
+  //Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+
+  var parseResult = function(result, data)
+  {
+    console.debug('result: ' + data.length);
+    if (!result)
+    {
+      return;
+    }
+    
+    //
+    // Convert html models -> json models
+    var jsonModel = JSON.parse(data);
+    
+    if (cb)
+    {
+      cb(jsonModel);
+    }
+  }
+
+  req.get('http://127.0.0.1:12346/kep?&Name=' + encodeURIComponent(searchVal) + '&Type=' + searchType + '&Format=0', parseResult);
+}
+
+</script>
+
+
+
+
+<script type="text/javascript">
+
+function generateUUID()
+{
+  var d = Date.now();
+  var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    var r = (d + Math.random()*16)%16 | 0;
+    d = Math.floor(d/16);
+    return (c=='x' ? r : (r&0x3|0x8)).toString(16);
+  });
+  return uuid;
+};
+function formattedDate(date)
+{
+  var d = new Date(date || Date.now()),
+      month = '' + (d.getMonth() + 1),
+      day = '' + d.getDate(),
+      year = d.getFullYear();
+
+  if (month.length < 2) month = '0' + month;
+  if (day.length < 2) day = '0' + day;
+
+  return [month, day, year].join('/');
+}
+
+
+
+var HttpClient = function() {
+  this.get = function(aUrl, aCallback)
+  {
+    anHttpRequest = new XMLHttpRequest();
+    anHttpRequest.onreadystatechange = function()
+    { 
+      console.log("["+aUrl.toString()+"] [state: " + anHttpRequest.readyState + "] [status: " + anHttpRequest.status + "]");
+      console.debug(anHttpRequest);
+      if (anHttpRequest.readyState == 4)
+      {
+        if (anHttpRequest.status == 200 || anHttpRequest.status == 0)
+        {
+          aCallback(true, anHttpRequest.responseText);
+        }
+        else
+        {
+          aCallback(false);
+        }
+      }
+    }
+
+    anHttpRequest.open( "GET", aUrl, true );            
+    anHttpRequest.send(null);
+  }
+}
+</script>
+
+<script type="text/javascript">
+
+var stringify = function(obj, str)
+{
+  if (obj.hasOwnProperty(str) && null != obj[str])
+  {
+    //console.debug(obj[str]);
+    obj[str] = obj[str].toString();
+  }
+}
+</script>
+
+<script type="text/javascript">
+    
+  function makeSyntaxHighlight(json) {
+      if (typeof json != 'string') {
+           json = JSON.stringify(json, undefined, 2);
+      }
+      json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+          var cls = 'number';
+          if (/^"/.test(match)) {
+              if (/:$/.test(match)) {
+                  cls = 'key';
+              } else {
+                  cls = 'string';
+              }
+          } else if (/true|false/.test(match)) {
+              cls = 'boolean';
+          } else if (/null/.test(match)) {
+              cls = 'null';
+          }
+          return '<span class="' + cls + '">' + match + '</span>';
+      });
+  }
+  function makeSyntaxHighlightHtml(json) {
+      var html = "<style>pre {outline: 1px solid #ccc; padding: 5px; margin: 5px; } .string { color: green; } ";
+      html+= " .number { color: darkorange; } .boolean { color: blue; } .null { color: magenta; } .key { color: red; }</style>";
+      html+= "<pre>"+makeSyntaxHighlight(json)+"</pre>";
+      return html;
+  }
+
+</script>
+
+
+</body>
+</html> 

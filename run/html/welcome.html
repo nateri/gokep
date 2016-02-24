@@ -1,0 +1,17 @@
+{{define "welcome"}}
+
+{{template "doctype"}}
+
+{{template "html_begin"}}
+{{template "html_head" .Header}}
+{{$host := .Header.Host}}
+
+<body>
+<h1>Welcome to <a href="{{$host}}/kbize">Kbize!</a></h1>
+<h2> <a href="{{$host}}/kbize/users">Users</a> </h2>
+<h2> <a href="{{$host}}/kbize/dbg">Debug</a></h2>
+</body>
+
+{{template "html_end"}}
+
+{{end}}
