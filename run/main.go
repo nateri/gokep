@@ -4,9 +4,11 @@ import (
 	//"bufio"
 	//"errors"
 	"flag"
+	"gokep/go"
+
 	"github.com/gin-gonic/gin"
-	"github.com/nateri/gokep/go"
 	"github.com/op/go-logging"
+
 	//"io"
 	//"io/ioutil"
 	stdlog "log"

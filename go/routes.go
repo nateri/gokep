@@ -6,6 +6,7 @@ import (
 	//"flag"
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
+
 	//"github.com/gin-gonic/gin/render"
 	//"github.com/op/go-logging"
 	//"io"
@@ -13,6 +14,7 @@ import (
 	//stdlog "log"
 	"html/template"
 	"net/http"
+
 	//"net/url"
 	//"os"
 	//"os/exec"
@@ -20,6 +22,7 @@ import (
 	//"golang.org/x/net/html"
 	"bytes"
 	"fmt"
+
 	//"github.com/PuerkitoBio/goquery"
 	//"golang.org/x/net/html"
 	//"bufio"
@@ -128,8 +131,8 @@ func KeplerLlc(c *gin.Context) {
 		Format ResponseFormat `form:"Format"`
 	}{}
 
-	success := c.Bind(&in)
-	if !success {
+	err := c.Bind(&in)
+	if nil != err {
 		c.JSON(500, gin.H{"Result": "Incorrect Parameters"})
 		return
 	}
@@ -166,8 +169,8 @@ func KeplerCorp(c *gin.Context) {
 		Format ResponseFormat `form:"Format"`
 	}{}
 
-	success := c.Bind(&in)
-	if !success {
+	err := c.Bind(&in)
+	if nil != err {
 		c.JSON(500, gin.H{"Result": "Incorrect Parameters"})
 		return
 	}
@@ -204,8 +207,8 @@ func KeplerNumber(c *gin.Context) {
 		Format ResponseFormat `form:"Format"`
 	}{}
 
-	success := c.Bind(&in)
-	if !success {
+	err := c.Bind(&in)
+	if nil != err {
 		c.JSON(500, gin.H{"Result": "Incorrect Parameters"})
 		return
 	}
